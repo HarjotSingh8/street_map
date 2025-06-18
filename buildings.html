@@ -105,6 +105,13 @@
     // Set initial value
     updateMapScaleDisplay();
 
+    // Add lighting for buildings
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.2); // strong white ambient light
+    scene.add(ambientLight);
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.0);
+    directionalLight.position.set(100, 200, 300);
+    scene.add(directionalLight);
+
     // Animate
     function animate() {
       requestAnimationFrame(animate);
@@ -169,6 +176,10 @@
                 const ways = Array.from(xmlDoc.querySelectorAll('way')).filter(way => {
                   return Array.from(way.querySelectorAll('tag')).some(tag => tag.getAttribute('k') === 'highway');
                 });
+                // Find all ways that are buildings
+                const buildingWays = Array.from(xmlDoc.querySelectorAll('way')).filter(way => {
+                  return Array.from(way.querySelectorAll('tag')).some(tag => tag.getAttribute('k') === 'building');
+                });
                 // Convert lat/lon to local x/y (simple equirectangular projection)
                 function latLonToXY(lat, lon, centerLat, centerLon) {
                   const R = 6371000; // Earth radius in meters
@@ -200,10 +211,33 @@
                     }
                   }
                 });
+                // Add buildings as 2D polygons using Vector3 for vertices (XZ plane, y=0.2)
+                buildingWays.forEach(way => {
+                  const nds = Array.from(way.querySelectorAll('nd'));
+                  const shapePoints = nds.map(nd => {
+                    const n = nodes[nd.getAttribute('ref')];
+                    if (n) {
+                      const p = latLonToXY(n.lat, n.lon, centerLat, centerLon);
+                      return new THREE.Vector3(p.x, 0.2, p.y); // y=0.2 for slight elevation
+                    }
+                    return null;
+                  }).filter(Boolean);
+                  if (shapePoints.length > 2) {
+                    // Create a flat polygon using BufferGeometry and LineLoop
+                    const geometry = new THREE.BufferGeometry().setFromPoints(shapePoints);
+                    // Close the loop if not already closed
+                    if (!shapePoints[0].equals(shapePoints[shapePoints.length - 1])) {
+                      geometry.setFromPoints([...shapePoints, shapePoints[0]]);
+                    }
+                    const material = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 4 });
+                    const line = new THREE.LineLoop(geometry, material);
+                    streetGroup.add(line);
+                  }
+                });
                 // Always set scale to current mapScale after creating streetGroup
                 streetGroup.scale.set(mapScale, mapScale, mapScale);
                 scene.add(streetGroup);
-                alert('Street models created from OSM data!');
+                alert('Street and building models created from OSM data!');
               })
               .catch(() => alert('Error downloading OSM data.'));
           } else {
