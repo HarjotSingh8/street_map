@@ -41,8 +41,16 @@
     <input id="address-input" type="text" placeholder="Enter address...">
     <button id="search-btn">Search</button>
   </div>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.154.0/build/three.min.js"></script>
-  <script>
+  <div style="position:absolute;top:70px;left:50%;transform:translateX(-50%);z-index:15;background:rgba(255,255,255,0.9);padding:6px 16px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
+    <label for="map-scale-slider">Map Scale: </label>
+    <input id="map-scale-slider" type="range" min="0.01" max="1" step="0.01" value="1" style="width:200px;">
+    <span id="map-scale-value">1.00</span>
+  </div>
+  <script type="module">
+    import * as THREE from 'https://threejsfundamentals.org/threejs/resources/threejs/r122/build/three.module.js';
+      import {OrbitControls} from 'https://threejsfundamentals.org/threejs/resources/threejs/r122/examples/jsm/controls/OrbitControls.js';
+    // import { TransformControls } from "https://cdn.jsdelivr.net/npm/threejs-transformcontrols@0.83.0/index.min.js";
+
     // Set up scene, camera, and renderer
     const scene = new THREE.Scene();
     const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
@@ -50,23 +58,46 @@
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.body.appendChild(renderer.domElement);
 
+    // Add OrbitControls for camera navigation
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableRotate = false;
+    controls.enablePan = true;
+    controls.enableZoom = true;
+
     // Create a cube
     const geometry = new THREE.BoxGeometry();
-    const material = new THREE.MeshNormalMaterial();
+    const material = new THREE.MeshNormalMaterial({ transparent: true, opacity: 0.4 });
     const cube = new THREE.Mesh(geometry, material);
     scene.add(cube);
 
     camera.position.z = 3;
 
-    // Animation loop
+    let streetGroup = null;
+    let mapScale = 1;
+    const mapScaleSlider = document.getElementById('map-scale-slider');
+    const mapScaleValue = document.getElementById('map-scale-value');
+    mapScaleSlider.addEventListener('input', function() {
+      mapScale = parseFloat(mapScaleSlider.value);
+      mapScaleValue.textContent = mapScale.toFixed(2);
+    });
+
+    // Animate
     function animate() {
       requestAnimationFrame(animate);
       cube.rotation.x += 0.01;
       cube.rotation.y += 0.01;
+      // Dynamically apply scale from slider
+      cube.scale.set(mapScale, mapScale, mapScale);
+      if (streetGroup) {
+        streetGroup.rotation.x += 0.01;
+        streetGroup.rotation.y += 0.01;
+        streetGroup.scale.set(mapScale, mapScale, mapScale);
+      }
       renderer.render(scene, camera);
     }
     animate();
 
+    // Address search and OSM download/parse
     document.getElementById('search-btn').addEventListener('click', function() {
       const address = document.getElementById('address-input').value.trim();
       if (!address) return;
@@ -77,21 +108,76 @@
             const lat = parseFloat(data[0].lat);
             const lon = parseFloat(data[0].lon);
             alert(`Coordinates for "${address}":\nLatitude: ${lat}\nLongitude: ${lon}`);
-            // Download OSM data for a small bounding box around the coordinates
-            const delta = 0.002; // ~200m
+            // Download OSM data for a larger bounding box around the coordinates in memory
+            const delta = 0.01; // ~1km (increased from 0.002)
             const left = lon - delta;
             const right = lon + delta;
             const top = lat + delta;
             const bottom = lat - delta;
             const bbox = `${left},${bottom},${right},${top}`;
             const osmUrl = `https://www.openstreetmap.org/api/0.6/map?bbox=${bbox}`;
-            // Trigger download
-            const a = document.createElement('a');
-            a.href = osmUrl;
-            a.download = `osm_data_${lat}_${lon}.osm`;
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
+            fetch(osmUrl)
+              .then(osmResponse => {
+                if (!osmResponse.ok) throw new Error('Failed to fetch OSM data');
+                return osmResponse.text();
+              })
+              .then(osmData => {
+                // Remove previous street model if any
+                if (streetGroup) {
+                  scene.remove(streetGroup);
+                }
+                // Parse OSM XML and create street models
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(osmData, 'text/xml');
+                const nodes = {};
+                // Collect all nodes
+                xmlDoc.querySelectorAll('node').forEach(node => {
+                  const id = node.getAttribute('id');
+                  const lat = parseFloat(node.getAttribute('lat'));
+                  const lon = parseFloat(node.getAttribute('lon'));
+                  nodes[id] = { lat, lon };
+                });
+                // Find all ways that are highways (streets)
+                const ways = Array.from(xmlDoc.querySelectorAll('way')).filter(way => {
+                  return Array.from(way.querySelectorAll('tag')).some(tag => tag.getAttribute('k') === 'highway');
+                });
+                // Convert lat/lon to local x/y (simple equirectangular projection)
+                function latLonToXY(lat, lon, centerLat, centerLon) {
+                  const R = 6371000; // Earth radius in meters
+                  const x = (lon - centerLon) * Math.cos((lat + centerLat) * Math.PI / 360) * Math.PI / 180 * R;
+                  const y = (lat - centerLat) * Math.PI / 180 * R;
+                  return { x, y };
+                }
+                // Center point for projection: use center of bounding box
+                const centerLat = (top + bottom) / 2;
+                const centerLon = (left + right) / 2;
+                // Create street geometries
+                streetGroup = new THREE.Group();
+                ways.forEach(way => {
+                  const nds = Array.from(way.querySelectorAll('nd'));
+                  for (let i = 0; i < nds.length - 1; i++) {
+                    const n1 = nodes[nds[i].getAttribute('ref')];
+                    const n2 = nodes[nds[i+1].getAttribute('ref')];
+                    if (n1 && n2) {
+                      const p1 = latLonToXY(n1.lat, n1.lon, centerLat, centerLon);
+                      const p2 = latLonToXY(n2.lat, n2.lon, centerLat, centerLon);
+                      // Make streets even thicker and brighter
+                      const material = new THREE.LineBasicMaterial({ color: 0xffff00, linewidth: 16 });
+                      const geometry = new THREE.BufferGeometry().setFromPoints([
+                        new THREE.Vector3(p1.x, 0, p1.y),
+                        new THREE.Vector3(p2.x, 0, p2.y)
+                      ]);
+                      const line = new THREE.Line(geometry, material);
+                      streetGroup.add(line);
+                    }
+                  }
+                });
+                // Always set scale to current mapScale after creating streetGroup
+                streetGroup.scale.set(mapScale, mapScale, mapScale);
+                scene.add(streetGroup);
+                alert('Street models created from OSM data!');
+              })
+              .catch(() => alert('Error downloading OSM data.'));
           } else {
             alert('No results found for that address.');
           }
