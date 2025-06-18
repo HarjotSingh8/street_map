@@ -211,7 +211,7 @@
                     }
                   }
                 });
-                // Add buildings as 2D polygons using Vector3 for vertices (XZ plane, y=0.2)
+                // Add buildings as filled extruded polygons using Vector3 for base (XZ plane, y=0.2)
                 buildingWays.forEach(way => {
                   const nds = Array.from(way.querySelectorAll('nd'));
                   const shapePoints = nds.map(nd => {
@@ -223,15 +223,39 @@
                     return null;
                   }).filter(Boolean);
                   if (shapePoints.length > 2) {
-                    // Create a flat polygon using BufferGeometry and LineLoop
-                    const geometry = new THREE.BufferGeometry().setFromPoints(shapePoints);
-                    // Close the loop if not already closed
-                    if (!shapePoints[0].equals(shapePoints[shapePoints.length - 1])) {
-                      geometry.setFromPoints([...shapePoints, shapePoints[0]]);
+                    // Triangulate the base polygon using earcut (built into Three.js)
+                    const base2D = shapePoints.map(v => [v.x, v.z]).flat();
+                    const triangles = THREE.ShapeUtils.triangulateShape(
+                      shapePoints.map(v => new THREE.Vector2(v.x, v.z)), []
+                    );
+                    const vertices = [];
+                    const indices = [];
+                    // Bottom face
+                    shapePoints.forEach(v => vertices.push(v.x, v.y, v.z));
+                    // Top face
+                    shapePoints.forEach(v => vertices.push(v.x, v.y + 20, v.z));
+                    const n = shapePoints.length;
+                    // Side faces
+                    for (let i = 0; i < n; i++) {
+                      const next = (i + 1) % n;
+                      indices.push(i, next, n + i);
+                      indices.push(next, n + next, n + i);
                     }
-                    const material = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 4 });
-                    const line = new THREE.LineLoop(geometry, material);
-                    streetGroup.add(line);
+                    // Bottom face triangles
+                    triangles.forEach(tri => {
+                      indices.push(tri[0], tri[1], tri[2]);
+                    });
+                    // Top face triangles (reverse order for correct normal)
+                    triangles.forEach(tri => {
+                      indices.push(n + tri[0], n + tri[2], n + tri[1]);
+                    });
+                    const geometry = new THREE.BufferGeometry();
+                    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+                    geometry.setIndex(indices);
+                    geometry.computeVertexNormals();
+                    const material = new THREE.MeshPhongMaterial({ color: 0xffffff, transparent: true, opacity: 0.9 });
+                    const mesh = new THREE.Mesh(geometry, material);
+                    streetGroup.add(mesh);
                   }
                 });
                 // Always set scale to current mapScale after creating streetGroup
