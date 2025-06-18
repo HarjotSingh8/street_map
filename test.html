@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>3D Cube on Canvas</title>
+  <style>
+    body { margin: 0; }
+    #search-container {
+      position: absolute;
+      top: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10;
+      background: rgba(255,255,255,0.9);
+      padding: 10px 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    }
+    #address-input {
+      width: 300px;
+      padding: 8px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+    }
+    #search-btn {
+      padding: 8px 16px;
+      font-size: 16px;
+      border: none;
+      background: #1976d2;
+      color: white;
+      border-radius: 4px;
+      cursor: pointer;
+      margin-left: 8px;
+    }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+  <div id="search-container">
+    <input id="address-input" type="text" placeholder="Enter address...">
+    <button id="search-btn">Search</button>
+  </div>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.154.0/build/three.min.js"></script>
+  <script>
+    // Set up scene, camera, and renderer
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // Create a cube
+    const geometry = new THREE.BoxGeometry();
+    const material = new THREE.MeshNormalMaterial();
+    const cube = new THREE.Mesh(geometry, material);
+    scene.add(cube);
+
+    camera.position.z = 3;
+
+    // Animation loop
+    function animate() {
+      requestAnimationFrame(animate);
+      cube.rotation.x += 0.01;
+      cube.rotation.y += 0.01;
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    document.getElementById('search-btn').addEventListener('click', function() {
+      const address = document.getElementById('address-input').value.trim();
+      if (!address) return;
+      fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(address)}`)
+        .then(response => response.json())
+        .then(data => {
+          if (data && data.length > 0) {
+            const lat = parseFloat(data[0].lat);
+            const lon = parseFloat(data[0].lon);
+            alert(`Coordinates for "${address}":\nLatitude: ${lat}\nLongitude: ${lon}`);
+            // Download OSM data for a small bounding box around the coordinates
+            const delta = 0.002; // ~200m
+            const left = lon - delta;
+            const right = lon + delta;
+            const top = lat + delta;
+            const bottom = lat - delta;
+            const bbox = `${left},${bottom},${right},${top}`;
+            const osmUrl = `https://www.openstreetmap.org/api/0.6/map?bbox=${bbox}`;
+            // Trigger download
+            const a = document.createElement('a');
+            a.href = osmUrl;
+            a.download = `osm_data_${lat}_${lon}.osm`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+          } else {
+            alert('No results found for that address.');
+          }
+        })
+        .catch(() => alert('Error searching for address.'));
+    });
+  </script>
+</body>
+</html>
