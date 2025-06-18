@@ -43,8 +43,8 @@
   </div>
   <div style="position:absolute;top:70px;left:50%;transform:translateX(-50%);z-index:15;background:rgba(255,255,255,0.9);padding:6px 16px;border-radius:8px;box-shadow:0 2px 8px rgba(0,0,0,0.1);">
     <label for="map-scale-slider">Map Scale: </label>
-    <input id="map-scale-slider" type="range" min="0.01" max="1" step="0.01" value="1" style="width:200px;">
-    <span id="map-scale-value">1.00</span>
+    <input id="map-scale-slider" type="range" min="0.005" max="1" step="0.001" value="0.005" style="width:200px;">
+    <span id="map-scale-value">0.01</span>
   </div>
   <script type="module">
     import * as THREE from 'https://threejsfundamentals.org/threejs/resources/threejs/r122/build/three.module.js';
@@ -60,9 +60,23 @@
 
     // Add OrbitControls for camera navigation
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableRotate = false;
+    controls.enableRotate = true;
     controls.enablePan = true;
     controls.enableZoom = true;
+
+    let userInteracted = false;
+    let autoRotateEnabled = true;
+    let disableRotationTimeout = null;
+
+    function temporarilyDisableAutoRotation() {
+      autoRotateEnabled = false;
+      if (disableRotationTimeout) clearTimeout(disableRotationTimeout);
+      disableRotationTimeout = setTimeout(() => {
+        autoRotateEnabled = true;
+      }, 5000); // 5 seconds
+    }
+
+    controls.addEventListener('start', temporarilyDisableAutoRotation);
 
     // Create a cube
     const geometry = new THREE.BoxGeometry();
@@ -73,24 +87,30 @@
     camera.position.z = 3;
 
     let streetGroup = null;
-    let mapScale = 1;
+    let mapScale = 0.005;
     const mapScaleSlider = document.getElementById('map-scale-slider');
     const mapScaleValue = document.getElementById('map-scale-value');
     mapScaleSlider.addEventListener('input', function() {
       mapScale = parseFloat(mapScaleSlider.value);
-      mapScaleValue.textContent = mapScale.toFixed(2);
+      mapScaleValue.textContent = mapScale.toFixed(3);
     });
+    mapScaleSlider.value = mapScale;
+    mapScaleValue.textContent = mapScale.toFixed(3);
 
     // Animate
     function animate() {
       requestAnimationFrame(animate);
-      cube.rotation.x += 0.01;
-      cube.rotation.y += 0.01;
+      if (autoRotateEnabled) {
+        cube.rotation.x += 0.002;
+        cube.rotation.y += 0.002;
+        if (streetGroup) {
+          streetGroup.rotation.x += 0.002;
+          streetGroup.rotation.y += 0.002;
+        }
+      }
       // Dynamically apply scale from slider
       cube.scale.set(mapScale, mapScale, mapScale);
       if (streetGroup) {
-        streetGroup.rotation.x += 0.01;
-        streetGroup.rotation.y += 0.01;
         streetGroup.scale.set(mapScale, mapScale, mapScale);
       }
       renderer.render(scene, camera);
